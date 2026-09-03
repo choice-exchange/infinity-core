@@ -1,0 +1,6 @@
+# Upstream commit this Injective fork is pinned to.
+# src/ MUST be byte-identical to this commit: upstream's audits (Hexens, OtterSec, Zellic)
+# describe the bytecode we deploy, and that only holds while src/ is untouched.
+# To move the pin: rebase onto the new upstream commit, update this file in the SAME commit,
+# re-run the full test suite, and note the move in choice_v2_contracts/deployments.
+UPSTREAM_BASE=61cd1311737fab6b1f31e7a5a136dabdcd5f4921

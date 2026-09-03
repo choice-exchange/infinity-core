@@ -1,0 +1,86 @@
+name: Upstream guard
+
+# The Injective fork exists to change deploy config, never protocol code.
+# Upstream's audits describe the bytecode we deploy only while src/ is byte-identical
+# to the pinned upstream commit. This job is the thing that keeps that true.
+#
+# Cheap by design: no Foundry, no submodules, no build. It must never be the reason
+# a PR waits, and it must never go red because upstream moved.
+
+on:
+  pull_request:
+  push:
+    branches: [injective]
+
+permissions:
+  contents: read
+
+jobs:
+  src-unchanged:
+    name: src/ identical to pinned upstream
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read the pin
+        id: pin
+        run: |
+          base="$(grep -oP '^UPSTREAM_BASE=\K[0-9a-f]{40}$' .injective-fork-base)"
+          if [ -z "$base" ]; then
+            echo "::error file=.injective-fork-base::No valid UPSTREAM_BASE=<40-hex-sha> line found"
+            exit 1
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the pinned upstream commit
+        run: |
+          git remote add upstream "https://github.com/pancakeswap/${{ github.event.repository.name }}.git"
+          git fetch --no-tags --depth=1 upstream "${{ steps.pin.outputs.base }}"
+
+      - name: Diff src/ against the pin
+        run: |
+          if ! git cat-file -e "${{ steps.pin.outputs.base }}^{commit}" 2>/dev/null; then
+            echo "::error::Pinned commit ${{ steps.pin.outputs.base }} is not reachable from upstream."
+            exit 1
+          fi
+          diff="$(git diff --stat "${{ steps.pin.outputs.base }}" HEAD -- src)"
+          if [ -n "$diff" ]; then
+            echo "::error::src/ has drifted from pinned upstream ${{ steps.pin.outputs.base }}."
+            echo "Upstream audits no longer describe the bytecode this repo deploys."
+            echo "Choice code belongs in choice_v2_contracts/src, not here."
+            echo "$diff"
+            git diff "${{ steps.pin.outputs.base }}" HEAD -- src
+            exit 1
+          fi
+          echo "src/ is byte-identical to ${{ steps.pin.outputs.base }}."
+
+  upstream-drift:
+    name: Report drift vs upstream/main (advisory)
+    runs-on: ubuntu-latest
+    # Advisory only: upstream moving is information, never a failed PR.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare the pin to upstream/main
+        run: |
+          base="$(grep -oP '^UPSTREAM_BASE=\K[0-9a-f]{40}$' .injective-fork-base)"
+          git remote add upstream "https://github.com/pancakeswap/${{ github.event.repository.name }}.git"
+          git fetch --no-tags upstream main
+          behind="$(git rev-list --count "$base"..upstream/main)"
+          {
+            echo "### Upstream drift"
+            echo
+            echo "Pinned at \`${base:0:12}\` - **$behind commit(s) behind** \`upstream/main\`."
+            if [ "$behind" -gt 0 ]; then
+              echo
+              echo "Changes to \`src/\` since the pin (empty means a rebase is a no-op for bytecode):"
+              echo '```'
+              git diff --stat "$base" upstream/main -- src || true
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

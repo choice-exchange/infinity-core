@@ -3,8 +3,30 @@ name: Tests
 on:
   push:
     branches:
-      - main
+      - injective
+    paths:
+      # INJECTIVE FORK: our diff is deploy config only, so the upstream suite runs
+      # only when protocol code, tests, deps or the upstream pin actually move.
+      # Keeps the org inside its Actions-minute budget (see plan, "Actions budget").
+      - 'src/**'
+      - 'test/**'
+      - 'lib/**'
+      - 'foundry.toml'
+      - 'remappings.txt'
+      - '.injective-fork-base'
+      - '.github/workflows/test.yml'
   pull_request:
+    paths:
+      # INJECTIVE FORK: our diff is deploy config only, so the upstream suite runs
+      # only when protocol code, tests, deps or the upstream pin actually move.
+      # Keeps the org inside its Actions-minute budget (see plan, "Actions budget").
+      - 'src/**'
+      - 'test/**'
+      - 'lib/**'
+      - 'foundry.toml'
+      - 'remappings.txt'
+      - '.injective-fork-base'
+      - '.github/workflows/test.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -36,4 +58,6 @@ jobs:
       - name: Run tests
         run: yarn test -vvv
         env:
-          FOUNDRY_PROFILE: ${{ github.ref_name == 'main' && 'ci_main' ||  'ci'  }}
+          # INJECTIVE FORK: this fork's default branch is `injective`, so upstream's
+          # `ci_main` (100k fuzz runs) could never trigger. `ci` = 10k runs.
+          FOUNDRY_PROFILE: ci
