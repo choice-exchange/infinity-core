@@ -1,12 +1,12 @@
 {
-    "create3Factory": "0x",
-    "poolOwner": "0x",
-    "vault": "0x",
-    "clPoolManager": "0x",
-    "binPoolManager": "0x",
-    "protocolFeeControllerOwner": "0x",
-    "clProtocolFeeController": "0x",
-    "binProtocolFeeController": "0x",
-    "clPoolManagerOwnerContract": "0x",
-    "binPoolManagerOwnerContract": "0x"
+  "create3Factory": "0x2Be6e98818A7CbBd1c7fD8e06A3B0449715790CD",
+  "poolOwner": "0x",
+  "vault": "0x",
+  "clPoolManager": "0x",
+  "binPoolManager": "0x",
+  "protocolFeeControllerOwner": "0x",
+  "clProtocolFeeController": "0x",
+  "binProtocolFeeController": "0x",
+  "clPoolManagerOwnerContract": "0x",
+  "binPoolManagerOwnerContract": "0x"
 }
