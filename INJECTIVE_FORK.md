@@ -42,3 +42,15 @@ The "Upstream drift" job reports how far behind the pin is on every PR, without 
 Injective RPCs can return `null` for a mined tx's receipt. Broadcast with `--slow`, **never
 use `--resume`**, and confirm every contract with `eth_getCode` rather than with a receipt.
 Full runbook: `choice_v2/CHOICE_V2_EVM_PLAN.md` §M1.
+
+## Licence, and the change notice GPL-2.0 asks for
+
+Upstream is PancakeSwap Infinity, Copyright (C) PancakeSwap, licensed GPL-2.0-or-later.
+This fork is distributed under the same terms, and Choice claims no additional restriction
+on any of it.
+
+**Every file this fork changes is listed in "Diff vs upstream" above, and every one of those
+changes was made on 2026-09-04.** That is the notice GPL-2.0 section 2(a) asks for: what was
+changed, and when. Nothing under `src/` is touched at all - `upstream-guard.yml` fails the
+build if it ever is - so the audited protocol source is byte-identical to the upstream commit
+pinned in `.injective-fork-base`.
