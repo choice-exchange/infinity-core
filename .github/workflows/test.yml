@@ -1,3 +1,5 @@
+# Modified by Choice Exchange on 2026-09-04: trigger branch, path filters and profile.
+# See INJECTIVE_FORK.md. Upstream: PancakeSwap, GPL-2.0-or-later.
 name: Tests
 
 on:
