@@ -148,35 +148,43 @@ contract PoolTest is Test {
             ? swapParams.lpFeeOverride.removeOverrideAndValidate(LPFeeLibrary.ONE_HUNDRED_PERCENT_FEE)
             : lpFee;
 
-        if (swapParams.zeroForOne) {
-            if (swapParams.sqrtPriceLimitX96 >= slot0.sqrtPriceX96()) {
-                vm.expectRevert(
-                    abi.encodeWithSelector(
-                        CLPool.InvalidSqrtPriceLimit.selector, slot0.sqrtPriceX96(), swapParams.sqrtPriceLimitX96
-                    )
-                );
-            } else if (swapParams.sqrtPriceLimitX96 <= TickMath.MIN_SQRT_RATIO) {
-                vm.expectRevert(
-                    abi.encodeWithSelector(
-                        CLPool.InvalidSqrtPriceLimit.selector, slot0.sqrtPriceX96(), swapParams.sqrtPriceLimitX96
-                    )
-                );
-            }
-        } else if (!swapParams.zeroForOne) {
-            if (swapParams.sqrtPriceLimitX96 <= slot0.sqrtPriceX96()) {
-                vm.expectRevert(
-                    abi.encodeWithSelector(
-                        CLPool.InvalidSqrtPriceLimit.selector, slot0.sqrtPriceX96(), swapParams.sqrtPriceLimitX96
-                    )
-                );
-            } else if (swapParams.sqrtPriceLimitX96 >= TickMath.MAX_SQRT_RATIO) {
-                vm.expectRevert(
-                    abi.encodeWithSelector(
-                        CLPool.InvalidSqrtPriceLimit.selector, slot0.sqrtPriceX96(), swapParams.sqrtPriceLimitX96
-                    )
-                );
-            }
-        } else if (swapParams.amountSpecified <= 0 && swapFee == LPFeeLibrary.ONE_HUNDRED_PERCENT_FEE) {
+        // `CLPool.swap` rejects two things before it swaps, in this order: an out-of-range
+        // price limit, and then a swap fee of 100% on an exact-OUTPUT swap (the input would be
+        // entirely consumed by the fee). Mirror that order and that precedence exactly - only
+        // one of the two can ever be the revert the pool actually produces.
+        //
+        // This used to be written as `if (zeroForOne) ... else if (!zeroForOne) ... else if
+        // (<the fee case>)`. Those first two branches are exhaustive, so the fee expectation
+        // was DEAD CODE and could never arm, and the test therefore failed - rather than
+        // passing - whenever the fuzzer happened to draw a 100% fee together with a valid
+        // price limit and a non-negative amountSpecified. Seed-dependent and rare, which is
+        // the worst shape for a CI failure: it looks like flake and it is not. Two further
+        // bugs were hiding behind the dead branch, and both are corrected here:
+        //
+        //   * the guard read `amountSpecified <= 0`, but the pool reverts when the swap is
+        //     NOT exact input, and `exactInput` is `amountSpecified < 0`. The case is
+        //     `>= 0`. The test bounds amountSpecified to [0, int128.max], so the old
+        //     condition could only ever have matched exactly zero;
+        //   * it compared the LP fee alone against 100%, where the pool compares
+        //     `state.swapFee` - the LP fee COMPOSITED with this direction's protocol fee.
+        bool priceLimitReverts = swapParams.zeroForOne
+            ? (swapParams.sqrtPriceLimitX96 >= slot0.sqrtPriceX96()
+                    || swapParams.sqrtPriceLimitX96 <= TickMath.MIN_SQRT_RATIO)
+            : (swapParams.sqrtPriceLimitX96 <= slot0.sqrtPriceX96()
+                    || swapParams.sqrtPriceLimitX96 >= TickMath.MAX_SQRT_RATIO);
+
+        uint16 directionProtocolFee =
+            swapParams.zeroForOne ? slot0.protocolFee().getZeroForOneFee() : slot0.protocolFee().getOneForZeroFee();
+        uint24 effectiveSwapFee =
+            directionProtocolFee == 0 ? swapFee : ProtocolFeeLibrary.calculateSwapFee(directionProtocolFee, swapFee);
+
+        if (priceLimitReverts) {
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    CLPool.InvalidSqrtPriceLimit.selector, slot0.sqrtPriceX96(), swapParams.sqrtPriceLimitX96
+                )
+            );
+        } else if (swapParams.amountSpecified >= 0 && effectiveSwapFee >= LPFeeLibrary.ONE_HUNDRED_PERCENT_FEE) {
             vm.expectRevert(CLPool.InvalidFeeForExactOut.selector);
         }
 
@@ -206,6 +214,42 @@ contract PoolTest is Test {
                 assertLe(state.slot0.sqrtPriceX96(), swapParams.sqrtPriceLimitX96);
             }
         }
+    }
+
+    /// @notice The exact counterexample CI drew on 2026-09-07, replayed with no fuzzer.
+    ///
+    /// `testSwap` reported `InvalidFeeForExactOut()` after 8,194 runs on seed
+    /// 0x8a9eeedc...59e, and the same suite had passed two days earlier on a different seed.
+    /// That is the signature of a hole in a test's own expectations rather than a flake, and
+    /// it was: the fee expectation sat in a branch that could never be reached (see the
+    /// comment in `testSwap`). Replaying the draw pins it deterministically, so the fix
+    /// cannot regress into "re-run it and hope for a kinder seed".
+    ///
+    /// The draw: an LP fee of exactly 1,000,000 pips - 100%, the top of the bound - and a
+    /// positive `amountSpecified`, which is an exact-OUTPUT swap. The pool is right to refuse
+    /// it: a 100% fee consumes the whole input, so no output can be delivered.
+    function test_testSwapCoversTheHundredPercentFeeExactOutputCase() public {
+        testSwap(
+            645326474426547203313410069153905908525362434349,
+            CLPool.ModifyLiquidityParams({
+                owner: address(0),
+                tickLower: 0,
+                tickUpper: 0,
+                liquidityDelta: 194,
+                tickSpacing: 32768,
+                salt: bytes32(uint256(0x16))
+            }),
+            CLPool.SwapParams({
+                tickSpacing: -8388608,
+                zeroForOne: true,
+                amountSpecified: 6651,
+                sqrtPriceLimitX96: 288230376151711743,
+                lpFeeOverride: 300000
+            }),
+            1_000_000,
+            13022,
+            256
+        );
     }
 
     function testDonate(
