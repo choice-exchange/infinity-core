@@ -1,6 +1,16 @@
 # Upstream commit this Injective fork is pinned to.
 # src/ MUST be byte-identical to this commit: upstream's audits (Hexens, OtterSec, Zellic)
 # describe the bytecode we deploy, and that only holds while src/ is untouched.
-# To move the pin: rebase onto the new upstream commit, update this file in the SAME commit,
-# re-run the full test suite, and note the move in choice_v2_contracts/deployments.
+# To move the pin: MERGE the new upstream commit into a branch off `injective`, update this
+# file in the same change, re-run the full test suite, and record the move in
+# choice_v2_contracts/deployments (the submodule pin AND meta.forkPins).
+#
+# 🔴 MERGE, NEVER REBASE - this used to say rebase, and it cost a silent CI failure on
+# 2026-09-07. A rebase rewrites the Injective commits under new SHAs, so the branch can no
+# longer be merged into the `injective` it was rebased away from. GitHub marks the PR
+# CONFLICTING and, because it cannot construct a merge commit, creates NO WORKFLOW RUNS AT
+# ALL: this guard and the full test suite both silently do not run, and the PR presents as
+# clean with an empty checks list. That is the worst available failure for the one check that
+# protects the audit basis. A merge leaves src/ byte-identical either way, which is the only
+# property this file asserts.
 UPSTREAM_BASE=61cd1311737fab6b1f31e7a5a136dabdcd5f4921

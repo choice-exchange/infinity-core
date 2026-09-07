@@ -11,6 +11,16 @@ on:
   pull_request:
   push:
     branches: [injective]
+  # 🔴 The reason this schedule exists. Upstream publishes NO tags and NO releases, so there
+  # is no version to watch and no notification to subscribe to - the only way to learn that a
+  # fix shipped is to look. Before this, the drift report below ran only on a PR to this fork
+  # or a push to `injective`, i.e. only when somebody was ALREADY changing it: upstream could
+  # ship security fixes for months into silence. The exact-output partial-fill fix
+  # (upstream #96) was found by a human fetching upstream by hand during a review, which is
+  # not a process.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -59,28 +69,86 @@ jobs:
   upstream-drift:
     name: Report drift vs upstream/main (advisory)
     runs-on: ubuntu-latest
-    # Advisory only: upstream moving is information, never a failed PR.
+    # Advisory only: upstream moving is information, never a failed PR. On a SCHEDULED run it
+    # also opens an issue, because a step summary nobody is looking at is not a notification.
     continue-on-error: true
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Compare the pin to upstream/main
+        id: drift
         run: |
           base="$(grep -oP '^UPSTREAM_BASE=\K[0-9a-f]{40}$' .injective-fork-base)"
           git remote add upstream "https://github.com/pancakeswap/${{ github.event.repository.name }}.git"
           git fetch --no-tags upstream main
           behind="$(git rev-list --count "$base"..upstream/main)"
+          srcdiff="$(git diff --stat "$base" upstream/main -- src || true)"
           {
             echo "### Upstream drift"
             echo
             echo "Pinned at \`${base:0:12}\` - **$behind commit(s) behind** \`upstream/main\`."
             if [ "$behind" -gt 0 ]; then
               echo
-              echo "Changes to \`src/\` since the pin (empty means a rebase is a no-op for bytecode):"
+              echo "Changes to \`src/\` since the pin (empty means moving the pin is a no-op for bytecode):"
               echo '```'
-              git diff --stat "$base" upstream/main -- src || true
+              echo "$srcdiff"
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # 🔑 The trigger is a src/ CHANGE, not the commit count. Upstream moving its CI or
+          # its docs is not something anyone needs to be told about; a byte of protocol code
+          # is. That distinction is what keeps this from becoming noise people mute.
+          {
+            echo "behind=$behind"
+            echo "srcchanged=$([ -n "$srcdiff" ] && echo yes || echo no)"
+            echo "short=${base:0:12}"
+          } >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$srcdiff" > /tmp/srcdiff.txt
+
+      - name: Raise or refresh the drift issue
+        if: >-
+          steps.drift.outputs.srcchanged == 'yes' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title="Upstream src/ drift: pinned at ${{ steps.drift.outputs.short }}"
+          body="$(
+            echo "\`src/\` differs from \`upstream/main\`. Upstream's audits describe the bytecode we"
+            echo "deploy only while it does not, so this is a decision to make rather than a bug."
+            echo
+            echo "Pinned at \`${{ steps.drift.outputs.short }}\`, **${{ steps.drift.outputs.behind }} commit(s)** behind."
+            echo
+            echo '```'
+            cat /tmp/srcdiff.txt
+            echo '```'
+            echo
+            echo "### Moving the pin"
+            echo
+            echo "**MERGE the new upstream commit, never rebase** - see the note in"
+            echo "\`.injective-fork-base\`. Update that file in the same change, re-run the full"
+            echo "suite, then bump the submodule and \`meta.forkPins\` in \`choice_v2_contracts\`."
+            echo
+            echo "⚠️ A fix only reaches users when the contract carrying it is REDEPLOYED. Check which"
+            echo "tier it lands in: routers and quoters are a redeploy plus a repoint; a pool manager"
+            echo "reaches new pools only; the Vault cannot be replaced without moving all liquidity."
+            echo
+            echo "_Opened automatically by the weekly upstream guard. It refreshes this issue rather"
+            echo "than opening a new one; close it once the pin has moved or the drift is reviewed."
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}_"
+          )"
+          existing="$(gh issue list --state open --label upstream-drift --limit 1 --json number -q '.[0].number' 2>/dev/null || true)"
+          gh label create upstream-drift --color B60205 --description "src/ has drifted from the pinned upstream commit" 2>/dev/null || true
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body "$body"
+            gh issue comment "$existing" --body "Still drifting as of $(date -u +%Y-%m-%d). ${{ steps.drift.outputs.behind }} commit(s) behind."
+          else
+            gh issue create --title "$title" --body "$body" --label upstream-drift
+          fi
